@@ -5,6 +5,10 @@
 
 typedef enum { HOST=0, JOINER=1, SPECTATOR=2 } ROLE;
 
+/* Broadcast configuration shared between main.c and protocol.c */
+extern int g_use_broadcast;
+extern struct sockaddr_in g_broadcast_addr;
+
 int perform_handshake(SOCKET sock, ROLE role, struct sockaddr_in *peer, int *seed);
 int send_battle_setup(SOCKET sock, struct sockaddr_in *peer, const char *pokemonName,
                       int sa_uses, int sd_uses, const char *mode);

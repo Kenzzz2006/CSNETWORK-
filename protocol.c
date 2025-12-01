@@ -19,6 +19,11 @@
 /* ---------------------------------------------------------
    Helper: Check if a received buffer has message_type: GAME_OVER
 --------------------------------------------------------- */
+/* Broadcast configuration */
+int g_use_broadcast = 0;
+struct sockaddr_in g_broadcast_addr;
+
+
 int detect_game_over(const char *buffer, char *winner, char *loser, int *seq_num)
 {
     if (strstr(buffer, "message_type: GAME_OVER") == NULL)
@@ -47,54 +52,87 @@ int perform_handshake(SOCKET sock, ROLE role, struct sockaddr_in *peer, int *see
     int from_len = sizeof(*peer);
     int rv;
 
+    // ADD RECEIVE TIMEOUT (10 seconds)
+    int timeout = 10000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout));
+
+    // ============================
+    //           HOST
+    // ============================
     if (role == HOST)
     {
         printf("Waiting for Joiner or Spectator handshake...\n");
 
-        rv = recv_udp(sock, buffer, sizeof(buffer) - 1, peer, &from_len);
-        if (rv <= 0) return 0;
-
-        buffer[rv] = '\0';
-        printf("Handshake request received:\n%s\n", buffer);
-
-        if (strstr(buffer, "HANDSHAKE_REQUEST") == NULL &&
-            strstr(buffer, "SPECTATOR_REQUEST") == NULL)
+        for (int attempt = 1; attempt <= 3; attempt++)
         {
-            printf("Unknown handshake request.\n");
-            return 0;
+            rv = recv_udp(sock, buffer, sizeof(buffer)-1, peer, &from_len);
+
+            if (rv > 0)
+            {
+                buffer[rv] = '\0';
+                printf("Handshake request received:\n%s\n", buffer);
+
+                if (strstr(buffer, "HANDSHAKE_REQUEST") ||
+                    strstr(buffer, "SPECTATOR_REQUEST"))
+                {
+                    srand(time(NULL));
+                    *seed = rand() % 100000;
+
+                    snprintf(buffer, sizeof(buffer),
+                             "message_type: HANDSHAKE_RESPONSE\n"
+                             "seed: %d\n",
+                             *seed);
+
+                    send_udp(sock, buffer, peer);
+                    return 1;
+                }
+
+                printf("Invalid handshake request.\n");
+            }
+            else
+            {
+                printf("No handshake received (attempt %d/3)...\n", attempt);
+            }
         }
 
-        srand(time(NULL));
-        *seed = rand() % 100000;
-
-        snprintf(buffer, sizeof(buffer),
-                 "message_type: HANDSHAKE_RESPONSE\n"
-                 "seed: %d\n",
-                 *seed);
-
-        return send_udp(sock, buffer, peer) >= 0;
+        return 0;   // failed after 3 attempts
     }
-    else
+
+    // ============================
+    //     JOINER / SPECTATOR
+    // ============================
+    const char *handshakeType =
+        (role == JOINER)
+        ? "message_type: HANDSHAKE_REQUEST\n"
+        : "message_type: SPECTATOR_REQUEST\n";
+
+    for (int attempt = 1; attempt <= 3; attempt++)
     {
-        if (role == JOINER)
-            snprintf(buffer, sizeof(buffer), "message_type: HANDSHAKE_REQUEST\n");
+        send_udp(sock, handshakeType, peer);
+
+        rv = recv_udp(sock, buffer, sizeof(buffer)-1, peer, &from_len);
+
+        if (rv > 0)
+        {
+            buffer[rv] = '\0';
+            printf("Handshake response received:\n%s\n", buffer);
+
+            char *p = strstr(buffer, "seed:");
+            if (p)
+            {
+                *seed = atoi(p + 5);
+                return 1;
+            }
+
+            printf("Malformed handshake response.\n");
+        }
         else
-            snprintf(buffer, sizeof(buffer), "message_type: SPECTATOR_REQUEST\n");
-
-        send_udp(sock, buffer, peer);
-
-        rv = recv_udp(sock, buffer, sizeof(buffer) - 1, peer, &from_len);
-        if (rv <= 0) return 0;
-
-        buffer[rv] = '\0';
-        printf("Handshake response received:\n%s\n", buffer);
-
-        char *p = strstr(buffer, "seed:");
-        if (!p) return 0;
-
-        *seed = atoi(p + 5);
-        return 1;
+        {
+            printf("No handshake response (attempt %d/3)...\n", attempt);
+        }
     }
+
+    return 0;   // failed after 3 attempts
 }
 
 /* ---------------------------------------------------------
@@ -112,7 +150,11 @@ int send_battle_setup(SOCKET sock, struct sockaddr_in *peer, const char *pokemon
              "stat_boosts: {\"special_attack_uses\": %d, \"special_defense_uses\": %d}\n",
              mode, pokemonName, sa_uses, sd_uses);
 
-    return send_udp(sock, buffer, peer) >= 0;
+    struct sockaddr_in *dest = peer;
+    if (g_use_broadcast) {
+        dest = &g_broadcast_addr;
+    }
+    return send_udp(sock, buffer, dest) >= 0;
 }
 
 int receive_battle_setup(SOCKET sock, struct sockaddr_in *peer, char *pokemonName,
@@ -168,8 +210,13 @@ int send_attack_announce(SOCKET sock, struct sockaddr_in *peer, const char *move
              "sequence_number: %d\n",
              move, seq_num);
 
-    return send_udp(sock, buffer, peer) >= 0;
+    struct sockaddr_in *dest = peer;
+    if (g_use_broadcast) {
+        dest = &g_broadcast_addr;
+    }
+    return send_udp(sock, buffer, dest) >= 0;
 }
+
 
 int receive_attack_announce(SOCKET sock, struct sockaddr_in *peer, char *move, int *seq_num)
 {
@@ -207,8 +254,13 @@ int send_defense_announce(SOCKET sock, struct sockaddr_in *peer, int seq_num)
              "sequence_number: %d\n",
              seq_num);
 
-    return send_udp(sock, buffer, peer) >= 0;
+    struct sockaddr_in *dest = peer;
+    if (g_use_broadcast) {
+        dest = &g_broadcast_addr;
+    }
+    return send_udp(sock, buffer, dest) >= 0;
 }
+
 
 int recv_defense_announce(SOCKET sock, struct sockaddr_in *peer, int *seq_num)
 {
@@ -255,7 +307,11 @@ int send_calculation_report(SOCKET sock, struct sockaddr_in *peer,
              damageDealt, defenderRemaining,
              status, seq_num);
 
-    return send_udp(sock, buffer, peer) >= 0;
+    struct sockaddr_in *dest = peer;
+    if (g_use_broadcast) {
+        dest = &g_broadcast_addr;
+    }
+    return send_udp(sock, buffer, dest) >= 0;
 }
 
 int recv_calculation_report(SOCKET sock, struct sockaddr_in *peer,
@@ -302,8 +358,13 @@ int send_calculation_confirm(SOCKET sock, struct sockaddr_in *peer, int seq_num)
              "sequence_number: %d\n",
              seq_num);
 
-    return send_udp(sock, buffer, peer) >= 0;
+    struct sockaddr_in *dest = peer;
+    if (g_use_broadcast) {
+        dest = &g_broadcast_addr;
+    }
+    return send_udp(sock, buffer, dest) >= 0;
 }
+
 
 int recv_calculation_confirm(SOCKET sock, struct sockaddr_in *peer, int *seq_num)
 {
@@ -328,6 +389,28 @@ int recv_calculation_confirm(SOCKET sock, struct sockaddr_in *peer, int *seq_num
     return 1;
 }
 
+int send_resolution_request(SOCKET sock, struct sockaddr_in *peer,
+                            const char *attacker, const char *move_used,
+                            int damageDealt, int defender_hp_remaining, int seq_num)
+{
+    char buffer[512];
+    snprintf(buffer, sizeof(buffer),
+             "message_type: RESOLUTION_REQUEST\n"
+             "attacker: %s\n"
+             "move_used: %s\n"
+             "damage_dealt: %d\n"
+             "defender_hp_remaining: %d\n"
+             "sequence_number: %d\n",
+             attacker, move_used, damageDealt, defender_hp_remaining, seq_num);
+
+    struct sockaddr_in *dest = peer;
+    if (g_use_broadcast) {
+        dest = &g_broadcast_addr;
+    }
+    return send_udp(sock, buffer, dest) >= 0;
+}
+
+
 /* ---------------------------------------------------------
    GAME_OVER
 --------------------------------------------------------- */
@@ -342,8 +425,13 @@ int send_game_over(SOCKET sock, struct sockaddr_in *peer,
              "sequence_number: %d\n",
              winner, loser, seq_num);
 
-    return send_udp(sock, buffer, peer) >= 0;
+    struct sockaddr_in *dest = peer;
+    if (g_use_broadcast) {
+        dest = &g_broadcast_addr;
+    }
+    return send_udp(sock, buffer, dest) >= 0;
 }
+
 
 int receive_game_over(SOCKET sock, struct sockaddr_in *peer,
                       char *winner, char *loser, int *seq_num)
