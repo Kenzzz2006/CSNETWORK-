@@ -26,6 +26,10 @@ SOCKET create_udp_socket(int port)
     int opt = 1;
     setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
 
+    // Allow sending broadcast packets
+    int bcast = 1;
+    setsockopt(s, SOL_SOCKET, SO_BROADCAST, (char*)&bcast, sizeof(bcast));
+
     // --------------------------------------------
     // Add receive timeout to prevent blocking forever
     // --------------------------------------------

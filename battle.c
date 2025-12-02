@@ -168,8 +168,27 @@ void start_battle(
 
             send_attack_announce(sock, peer, move, seq++);
 
-            int def_seq;
-            recv_defense_announce(sock, peer, &def_seq);
+            int def_seq = 0;
+			int attempts = 0;
+			int got = 0;
+			while (attempts < 10 && !got) {   // try up to 10 times (3s * 10 = 30s total)
+			    int rv = recv_defense_announce(sock, peer, &def_seq);
+			    if (rv > 0) {
+			        got = 1;
+			        break;
+			    } else {
+			        // if the recv_* returns <= 0, log and retry
+			        printf("[WARN] recv_defense_announce returned %d, attempt %d\n", rv, attempts+1);
+			        fflush(stdout);
+			        attempts++;
+			    }
+			}
+			if (!got) {
+			    printf("[ERROR] Failed to receive DEFENSE_ANNOUNCE after retries. Aborting turn.\n");
+			    fflush(stdout);
+			    // you can choose to continue to next turn or abort the battle:
+			    return; // or continue;
+			}
 
             char move_type[20];
             get_move_type(move, move_type);
