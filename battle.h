@@ -1,9 +1,8 @@
 #ifndef BATTLE_H
 #define BATTLE_H
 
-#include <winsock2.h>
 #include "protocols.h"
-#include "network.h"
+#include <stdio.h>
 
 typedef struct {
     char name[50];
@@ -12,56 +11,38 @@ typedef struct {
     int hp;
     int attack;
     int defense;
-    int sp_attack;
-    int sp_defense;
+    int special_attack;
+    int special_defense;
     int speed;
-    float against_bug;
-    float against_dark;
-    float against_dragon;
-    float against_electric;
-    float against_fairy;
-    float against_fight;
-    float against_fire;
-    float against_flying;
-    float against_ghost;
-    float against_grass;
-    float against_ground;
-    float against_ice;
-    float against_normal;
-    float against_poison;
-    float against_psychic;
-    float against_rock;
-    float against_steel;
-    float against_water;
+    char moves[4][50]; // 4 moves per Pokemon
 } Pokemon;
 
-/* Main battle loop for section 5.2 */
-void start_battle(
-    SOCKET sock,
-    ROLE role,
-    struct sockaddr_in *peer,
-    int seed,
-    Pokemon myPokemon,
-    Pokemon oppPokemon,
-    int my_sa,
-    int my_sd,
-    int opp_sa,
-    int opp_sd
+int load_pokedex(const char *filename, Pokemon *pokedex);
+void start_battle(SOCKET sock, ROLE role, struct sockaddr_in *peer, int seed,
+                  Pokemon my_poke, Pokemon opp_poke,
+                  int my_sa_uses, int my_sd_uses, int opp_sa_uses, int opp_sd_uses);
+
+// 5.2 Helper functions
+int calculation_reports_equal(
+    const char *attacker1, const char *move1, int remainingHealth1, 
+    int damageDealt1, int defenderHP1, const char *status1,
+    const char *attacker2, const char *move2, int remainingHealth2, 
+    int damageDealt2, int defenderHP2, const char *status2
 );
 
-/* Corrected damage function */
-int calculate_damage(int basePower, int attackerStat, float typeMultiplier, int defenderStat);
+int perform_damage_calculation(Pokemon *attacker, Pokemon *defender, 
+                              const char *move_name, int *damage, 
+                              int *remaining_attacker_hp, int *remaining_defender_hp,
+                              char *status_message, int seed, int turn_number);
 
-/* Load Pokémon data from CSV */
-int load_pokedex(const char *filename, Pokemon pokedex[]);
+int handle_resolution_discrepancy(SOCKET sock, struct sockaddr_in *peer,
+                                 const char *my_attacker, const char *my_move,
+                                 int my_damage, int my_defender_hp, int seq_num,
+                                 const char *opp_attacker, const char *opp_move,
+                                 int opp_damage, int opp_defender_hp);
 
-/* Special attack / defense boost */
-void use_stat_boost(int *boost_count);
-
-/* NEW — used by 5.2 damage phase */
-float get_type_multiplier(Pokemon defender, const char *move_type);
-
-/* NEW — temporary move-type mapping */
-void get_move_type(const char *move_name, char *move_type_out);
+void battle_state_update(Pokemon *my_poke, Pokemon *opp_poke,
+                        int damage, int remaining_health, int defender_hp_remaining);
 
 #endif
+
